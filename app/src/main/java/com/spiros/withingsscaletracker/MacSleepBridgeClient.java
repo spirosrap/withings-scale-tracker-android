@@ -1,6 +1,7 @@
 package com.spiros.withingsscaletracker;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -12,7 +13,26 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class MacSleepBridgeClient {
+    HealthBridgePayload fetchPayload(String host) throws Exception {
+        try {
+            String response = get(host, "/apple-health/snapshot");
+            return HealthBridgePayload.fromBridgeJson(new JSONObject(response));
+        } catch (Exception exception) {
+            return new HealthBridgePayload(null, fetch(host));
+        }
+    }
+
     List<SleepSummary> fetch(String host) throws Exception {
+        String response = get(host, "/apple-health/sleep");
+        JSONArray json = new JSONArray(response);
+        ArrayList<SleepSummary> summaries = new ArrayList<>();
+        for (int index = 0; index < json.length(); index++) {
+            summaries.add(SleepSummary.fromBridgeJson(json.getJSONObject(index)));
+        }
+        return summaries;
+    }
+
+    private String get(String host, String path) throws Exception {
         String normalizedHost = host.trim()
             .replace("http://", "")
             .replace("https://", "");
@@ -26,7 +46,7 @@ final class MacSleepBridgeClient {
             normalizedHost += ":8766";
         }
 
-        HttpURLConnection connection = (HttpURLConnection) new URL("http://" + normalizedHost + "/apple-health/sleep").openConnection();
+        HttpURLConnection connection = (HttpURLConnection) new URL("http://" + normalizedHost + path).openConnection();
         connection.setRequestMethod("GET");
         connection.setRequestProperty("Accept", "application/json");
         connection.setConnectTimeout(5000);
@@ -39,12 +59,7 @@ final class MacSleepBridgeClient {
             throw new IllegalStateException("Mac bridge HTTP " + status + ": " + response);
         }
 
-        JSONArray json = new JSONArray(response);
-        ArrayList<SleepSummary> summaries = new ArrayList<>();
-        for (int index = 0; index < json.length(); index++) {
-            summaries.add(SleepSummary.fromBridgeJson(json.getJSONObject(index)));
-        }
-        return summaries;
+        return response;
     }
 
     private static String readAll(InputStream stream) throws Exception {

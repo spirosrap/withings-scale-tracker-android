@@ -3,7 +3,9 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
         android:label="Scale Journal"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.WithingsScaleTracker"
         android:usesCleartextTraffic="true">
         <activity

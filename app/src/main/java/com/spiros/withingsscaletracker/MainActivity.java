@@ -45,13 +45,16 @@ public final class MainActivity extends Activity {
     private WithingsToken token;
     private final ArrayList<ScaleReading> readings = new ArrayList<>();
     private final ArrayList<SleepSummary> sleepSummaries = new ArrayList<>();
+    private HealthSnapshot healthSnapshot;
     private String status = "Not configured";
     private String error;
     private String sleepNote;
+    private String healthNote;
     private String bridgeStatus = "Bridge not started";
     private String macBridgeHost = "";
     private boolean loading;
     private Tab selectedTab = Tab.SCALE;
+    private long lastAutomaticBridgeImportMillis;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,6 +67,12 @@ public final class MainActivity extends Activity {
         handleOAuthCallback(getIntent());
         render();
         if (token != null) refresh();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        maybeImportFromMacAutomatically();
     }
 
     @Override
@@ -86,6 +95,7 @@ public final class MainActivity extends Activity {
             token = secureStore.loadToken();
             sleepSummaries.clear();
             sleepSummaries.addAll(secureStore.loadSleepSummaries());
+            healthSnapshot = secureStore.loadHealthSnapshot();
             macBridgeHost = secureStore.loadMacBridgeHost();
             status = token != null ? "Connected" : (credentials.isComplete() ? "Needs authorization" : "Not configured");
         } catch (Exception exception) {
@@ -96,9 +106,17 @@ public final class MainActivity extends Activity {
 
     private void startSleepBridge() {
         try {
-            sleepBridgeServer = new SleepBridgeServer(SLEEP_BRIDGE_PORT, summaries -> runOnUiThread(() -> {
-                importSleepSummaries(summaries, "Imported Apple Health sleep from iPhone.");
-            }));
+            sleepBridgeServer = new SleepBridgeServer(SLEEP_BRIDGE_PORT, new SleepBridgeServer.Listener() {
+                @Override
+                public void onSleepSummaries(List<SleepSummary> summaries) {
+                    runOnUiThread(() -> importSleepSummaries(summaries, "Imported Apple Health sleep from iPhone."));
+                }
+
+                @Override
+                public void onHealthPayload(HealthBridgePayload payload) {
+                    runOnUiThread(() -> importHealthPayload(payload, "Imported Apple Health data from iPhone."));
+                }
+            });
             sleepBridgeServer.start();
             bridgeStatus = "Listening on " + bridgeHostHint() + ":" + SLEEP_BRIDGE_PORT;
         } catch (Exception exception) {
@@ -225,6 +243,7 @@ public final class MainActivity extends Activity {
                     loading = false;
                     status = "Updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
                     render();
+                    maybeImportFromMacAutomatically();
                 });
             } catch (Exception exception) {
                 runOnUiThread(() -> {
@@ -232,6 +251,7 @@ public final class MainActivity extends Activity {
                     status = "Error";
                     error = exception.getMessage();
                     render();
+                    maybeImportFromMacAutomatically();
                 });
             }
         });
@@ -260,29 +280,75 @@ public final class MainActivity extends Activity {
     }
 
     private void importSleepFromMac(String host) {
+        importSleepFromMac(host, false);
+    }
+
+    private void importSleepFromMac(String host, boolean automatic) {
         String trimmedHost = host.trim();
         secureStore.saveMacBridgeHost(trimmedHost);
         macBridgeHost = trimmedHost;
         loading = true;
-        status = "Importing sleep";
+        status = automatic ? "Auto-importing from Mac" : "Importing from Mac";
         error = null;
         render();
         executor.execute(() -> {
             try {
-                List<SleepSummary> imported = macSleepBridgeClient.fetch(trimmedHost);
+                HealthBridgePayload payload = macSleepBridgeClient.fetchPayload(trimmedHost);
                 runOnUiThread(() -> {
                     loading = false;
-                    importSleepSummaries(imported, "Imported Apple Health sleep from Mac bridge.");
+                    importHealthPayload(payload, "Imported Apple Health data from Mac bridge.");
                 });
             } catch (Exception exception) {
                 runOnUiThread(() -> {
                     loading = false;
                     error = exception.getMessage();
-                    status = "Sleep import failed";
+                    status = "Import failed";
                     render();
                 });
             }
         });
+    }
+
+    private void maybeImportFromMacAutomatically() {
+        if (loading || macBridgeHost.trim().isEmpty()) return;
+
+        long now = System.currentTimeMillis();
+        if (now - lastAutomaticBridgeImportMillis < 5 * 60 * 1000) return;
+
+        lastAutomaticBridgeImportMillis = now;
+        importSleepFromMac(macBridgeHost, true);
+    }
+
+    private void importHealthPayload(HealthBridgePayload payload, String note) {
+        boolean importedSnapshot = payload.snapshot != null;
+        boolean importedSleep = !payload.sleepSummaries.isEmpty();
+        if (payload.snapshot != null) {
+            healthSnapshot = payload.snapshot.importedNow();
+            saveHealthSnapshot();
+        }
+        if (importedSleep) {
+            mergeSleepSummaries(payload.sleepSummaries);
+            saveSleepCache();
+        }
+
+        if (!importedSnapshot && !importedSleep) {
+            sleepNote = "Bridge is reachable. No Apple Health data was returned.";
+            healthNote = sleepNote;
+            status = "Bridge checked " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
+            render();
+            return;
+        }
+
+        if (importedSnapshot) {
+            sleepNote = note;
+            healthNote = note;
+            status = "Health updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
+        } else {
+            sleepNote = "Imported Apple Health sleep from Mac bridge.";
+            healthNote = "Imported sleep from Mac bridge. No Health snapshot has been sent from the iPhone yet.";
+            status = "Sleep updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
+        }
+        render();
     }
 
     private void mergeSleepSummaries(List<SleepSummary> imported) {
@@ -305,6 +371,15 @@ public final class MainActivity extends Activity {
             error = exception.getMessage();
         }
     }
+
+    private void saveHealthSnapshot() {
+        try {
+            secureStore.saveHealthSnapshot(healthSnapshot);
+        } catch (Exception exception) {
+            error = exception.getMessage();
+        }
+    }
+
 
     private void render() {
         LinearLayout root = new LinearLayout(this);
@@ -334,6 +409,9 @@ public final class MainActivity extends Activity {
                 break;
             case SLEEP:
                 renderSleep(content);
+                break;
+            case HEALTH:
+                renderHealth(content);
                 break;
             case SETTINGS:
                 renderSettings(content);
@@ -378,6 +456,9 @@ public final class MainActivity extends Activity {
             Button button = new Button(this);
             button.setText(tab.title);
             button.setAllCaps(false);
+            button.setTextSize(12);
+            button.setMinWidth(0);
+            button.setPadding(0, 0, 0, 0);
             button.setTextColor(selectedTab == tab ? TEXT : MUTED);
             button.setBackgroundColor(selectedTab == tab ? BLUE : PANEL_ALT);
             button.setOnClickListener(view -> {
@@ -451,7 +532,7 @@ public final class MainActivity extends Activity {
     private void renderSleep(LinearLayout content) {
         content.addView(statusPanel(
             "Mac Bridge",
-            "Send sleep from the iPhone to the Mac app first, then import it here. The saved host is the Mac Tailscale address."
+            "Send sleep and today's Apple Health snapshot from the iPhone to the Mac app first, then import it here."
         ));
 
         EditText macHost = editText("Mac bridge host", macBridgeHost, false);
@@ -498,6 +579,71 @@ public final class MainActivity extends Activity {
             SleepSummary item = sleepSummaries.get(i);
             content.addView(simpleRow(item.formattedDate(), SleepSummary.formatDuration(item.totalSleepSeconds)));
         }
+    }
+
+    private void renderHealth(LinearLayout content) {
+        content.addView(statusPanel(
+            "Apple Health Snapshot",
+            "This is the latest iPhone Health snapshot imported through the Mac bridge. It updates when the iPhone app sends fresh data to the Mac."
+        ));
+
+        EditText macHost = editText("Mac bridge host", macBridgeHost, false);
+        content.addView(macHost);
+
+        Button importFromMac = new Button(this);
+        importFromMac.setText("Import from Mac");
+        importFromMac.setAllCaps(false);
+        importFromMac.setEnabled(!loading);
+        importFromMac.setOnClickListener(view -> importSleepFromMac(macHost.getText().toString()));
+        content.addView(importFromMac);
+
+        if (healthNote != null && !healthNote.isEmpty()) {
+            content.addView(statusPanel("Import", healthNote));
+        }
+
+        if (healthSnapshot == null) {
+            content.addView(statusPanel("No Health Snapshot", "Open the iPhone app, allow the new Health categories, then send to the Mac bridge."));
+            return;
+        }
+
+        content.addView(sectionTitle("Today  " + healthSnapshot.formattedDate()));
+        content.addView(statusPanel("Last Synced", healthSnapshot.formattedImportedAt()));
+        content.addView(statusPanel("iPhone Snapshot", healthSnapshot.formattedGeneratedAt()));
+
+        if (!healthSnapshot.hasValues()) {
+            content.addView(statusPanel("No Values", "The snapshot was imported, but Apple Health did not return values for the requested categories yet."));
+            return;
+        }
+
+        LinearLayout grid = grid();
+        if (healthSnapshot.steps != null) {
+            grid.addView(valueCard("Steps", HealthSnapshot.formatWhole(healthSnapshot.steps)), gridCellParams());
+        }
+        if (healthSnapshot.activeEnergyKilocalories != null) {
+            grid.addView(valueCard("Active Energy", HealthSnapshot.formatCalories(healthSnapshot.activeEnergyKilocalories)), gridCellParams());
+        }
+        if (healthSnapshot.walkingRunningDistanceMeters != null) {
+            grid.addView(valueCard("Distance", HealthSnapshot.formatDistance(healthSnapshot.walkingRunningDistanceMeters)), gridCellParams());
+        }
+        if (healthSnapshot.exerciseMinutes != null) {
+            grid.addView(valueCard("Exercise", HealthSnapshot.formatMinutes(healthSnapshot.exerciseMinutes)), gridCellParams());
+        }
+        if (healthSnapshot.flightsClimbed != null) {
+            grid.addView(valueCard("Flights", HealthSnapshot.formatWhole(healthSnapshot.flightsClimbed)), gridCellParams());
+        }
+        if (healthSnapshot.latestHeartRate != null) {
+            grid.addView(valueCard("Heart Rate", HealthSnapshot.formatBpm(healthSnapshot.latestHeartRate)), gridCellParams());
+        }
+        if (healthSnapshot.restingHeartRate != null) {
+            grid.addView(valueCard("Resting HR", HealthSnapshot.formatBpm(healthSnapshot.restingHeartRate)), gridCellParams());
+        }
+        if (healthSnapshot.latestRespiratoryRate != null) {
+            grid.addView(valueCard("Resp.", HealthSnapshot.formatRespiratoryRate(healthSnapshot.latestRespiratoryRate)), gridCellParams());
+        }
+        if (healthSnapshot.oxygenSaturationPercent != null) {
+            grid.addView(valueCard("Blood Oxygen", HealthSnapshot.formatPercent(healthSnapshot.oxygenSaturationPercent)), gridCellParams());
+        }
+        content.addView(grid);
     }
 
     private void renderSettings(LinearLayout content) {
@@ -672,6 +818,7 @@ public final class MainActivity extends Activity {
         SCALE("Scale"),
         HISTORY("History"),
         SLEEP("Sleep"),
+        HEALTH("Health"),
         SETTINGS("Settings");
 
         final String title;

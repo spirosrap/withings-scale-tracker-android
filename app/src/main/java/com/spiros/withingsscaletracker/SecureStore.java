@@ -24,6 +24,7 @@ final class SecureStore {
     private static final String TOKEN = "token";
     private static final String OAUTH_STATE = "oauth_state";
     private static final String SLEEP_SUMMARIES = "sleep_summaries";
+    private static final String HEALTH_SNAPSHOT = "health_snapshot";
     private static final String MAC_BRIDGE_HOST = "mac_bridge_host";
 
     private final SharedPreferences prefs;
@@ -100,6 +101,16 @@ final class SecureStore {
             summaries.add(SleepSummary.fromStoredJson(json.getJSONObject(index)));
         }
         return summaries;
+    }
+
+    void saveHealthSnapshot(HealthSnapshot snapshot) throws Exception {
+        putEncrypted(HEALTH_SNAPSHOT, snapshot.toJson().toString());
+    }
+
+    HealthSnapshot loadHealthSnapshot() throws Exception {
+        String raw = getEncrypted(HEALTH_SNAPSHOT);
+        if (raw == null) return null;
+        return HealthSnapshot.fromStoredJson(new JSONObject(raw));
     }
 
     void saveOAuthState(String state) {

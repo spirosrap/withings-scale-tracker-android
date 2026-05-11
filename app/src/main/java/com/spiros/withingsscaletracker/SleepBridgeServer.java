@@ -1,6 +1,7 @@
 package com.spiros.withingsscaletracker;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -17,6 +18,7 @@ import java.util.Locale;
 final class SleepBridgeServer {
     interface Listener {
         void onSleepSummaries(List<SleepSummary> summaries) throws Exception;
+        void onHealthPayload(HealthBridgePayload payload) throws Exception;
     }
 
     private final int port;
@@ -81,7 +83,9 @@ final class SleepBridgeServer {
                 }
             }
 
-            if (!requestLine.startsWith("POST /apple-health/sleep ")) {
+            boolean isSleepRoute = requestLine.startsWith("POST /apple-health/sleep ");
+            boolean isSnapshotRoute = requestLine.startsWith("POST /apple-health/snapshot ");
+            if (!isSleepRoute && !isSnapshotRoute) {
                 send(closeableSocket, "404 Not Found", "Unknown bridge route.");
                 return;
             }
@@ -94,14 +98,21 @@ final class SleepBridgeServer {
                 offset += read;
             }
 
-            JSONArray json = new JSONArray(new String(chars, 0, offset));
-            ArrayList<SleepSummary> summaries = new ArrayList<>();
-            for (int index = 0; index < json.length(); index++) {
-                summaries.add(SleepSummary.fromBridgeJson(json.getJSONObject(index)));
-            }
+            String body = new String(chars, 0, offset);
+            if (isSnapshotRoute) {
+                HealthBridgePayload payload = HealthBridgePayload.fromBridgeJson(new JSONObject(body));
+                listener.onHealthPayload(payload);
+                send(closeableSocket, "200 OK", "Imported Apple Health payload.");
+            } else {
+                JSONArray json = new JSONArray(body);
+                ArrayList<SleepSummary> summaries = new ArrayList<>();
+                for (int index = 0; index < json.length(); index++) {
+                    summaries.add(SleepSummary.fromBridgeJson(json.getJSONObject(index)));
+                }
 
-            listener.onSleepSummaries(summaries);
-            send(closeableSocket, "200 OK", "Imported " + summaries.size() + " sleep summaries.");
+                listener.onSleepSummaries(summaries);
+                send(closeableSocket, "200 OK", "Imported " + summaries.size() + " sleep summaries.");
+            }
         } catch (Exception error) {
             try {
                 send(socket, "400 Bad Request", error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
