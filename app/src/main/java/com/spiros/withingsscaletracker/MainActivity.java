@@ -93,6 +93,8 @@ public final class MainActivity extends Activity {
         try {
             credentials = secureStore.loadCredentials();
             token = secureStore.loadToken();
+            readings.clear();
+            readings.addAll(secureStore.loadScaleReadings());
             sleepSummaries.clear();
             sleepSummaries.addAll(secureStore.loadSleepSummaries());
             healthSnapshot = secureStore.loadHealthSnapshot();
@@ -209,9 +211,25 @@ public final class MainActivity extends Activity {
             try {
                 WithingsToken activeToken = token;
                 if (activeToken.needsRefresh()) {
-                    activeToken = client.refreshToken(credentials, activeToken);
-                    secureStore.saveToken(activeToken);
-                    token = activeToken;
+                    try {
+                        activeToken = client.refreshToken(credentials, activeToken);
+                        secureStore.saveToken(activeToken);
+                        token = activeToken;
+                    } catch (WithingsApiException exception) {
+                        if (exception.isInvalidRefreshToken()) {
+                            secureStore.clearToken();
+                            token = null;
+                            runOnUiThread(() -> {
+                                loading = false;
+                                status = credentials.isComplete() ? "Needs authorization" : "Not configured";
+                                error = "Withings login expired. Connect Withings again.";
+                                render();
+                                maybeImportFromMacAutomatically();
+                            });
+                            return;
+                        }
+                        throw exception;
+                    }
                 }
 
                 List<ScaleReading> fetchedReadings = client.fetchReadings(activeToken.accessToken);
@@ -294,9 +312,10 @@ public final class MainActivity extends Activity {
         executor.execute(() -> {
             try {
                 HealthBridgePayload payload = macSleepBridgeClient.fetchPayload(trimmedHost);
+                List<ScaleReading> importedReadings = macSleepBridgeClient.fetchScaleReadings(trimmedHost);
                 runOnUiThread(() -> {
                     loading = false;
-                    importHealthPayload(payload, "Imported Apple Health data from Mac bridge.");
+                    importMacBridgeData(payload, importedReadings);
                 });
             } catch (Exception exception) {
                 runOnUiThread(() -> {
@@ -320,6 +339,21 @@ public final class MainActivity extends Activity {
     }
 
     private void importHealthPayload(HealthBridgePayload payload, String note) {
+        importHealthPayload(payload, note, false);
+    }
+
+    private void importMacBridgeData(HealthBridgePayload payload, List<ScaleReading> importedReadings) {
+        if (!importedReadings.isEmpty()) {
+            readings.clear();
+            readings.addAll(importedReadings);
+            saveScaleCache();
+        }
+
+        error = null;
+        importHealthPayload(payload, "Imported Apple Health data from Mac bridge.", !importedReadings.isEmpty());
+    }
+
+    private void importHealthPayload(HealthBridgePayload payload, String note, boolean importedScale) {
         boolean importedSnapshot = payload.snapshot != null;
         boolean importedSleep = !payload.sleepSummaries.isEmpty();
         if (payload.snapshot != null) {
@@ -331,7 +365,7 @@ public final class MainActivity extends Activity {
             saveSleepCache();
         }
 
-        if (!importedSnapshot && !importedSleep) {
+        if (!importedSnapshot && !importedSleep && !importedScale) {
             sleepNote = "Bridge is reachable. No Apple Health data was returned.";
             healthNote = sleepNote;
             status = "Bridge checked " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
@@ -341,8 +375,11 @@ public final class MainActivity extends Activity {
 
         if (importedSnapshot) {
             sleepNote = note;
-            healthNote = note;
-            status = "Health updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
+            healthNote = importedScale ? "Imported scale and Apple Health data from Mac bridge." : note;
+            status = importedScale ? "Mac import updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date()) : "Health updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
+        } else if (importedScale) {
+            healthNote = "Imported scale data from Mac bridge. No Health snapshot has been sent from the iPhone yet.";
+            status = "Scale updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
         } else {
             sleepNote = "Imported Apple Health sleep from Mac bridge.";
             healthNote = "Imported sleep from Mac bridge. No Health snapshot has been sent from the iPhone yet.";
@@ -367,6 +404,14 @@ public final class MainActivity extends Activity {
     private void saveSleepCache() {
         try {
             secureStore.saveSleepSummaries(sleepSummaries);
+        } catch (Exception exception) {
+            error = exception.getMessage();
+        }
+    }
+
+    private void saveScaleCache() {
+        try {
+            secureStore.saveScaleReadings(readings);
         } catch (Exception exception) {
             error = exception.getMessage();
         }

@@ -332,4 +332,10 @@ final class WithingsApiException extends Exception {
     boolean isInsufficientScope() {
         return status == 403 && getMessage() != null && getMessage().toLowerCase(Locale.US).contains("insufficient");
     }
+
+    boolean isInvalidRefreshToken() {
+        if (getMessage() == null) return false;
+        String normalized = getMessage().toLowerCase(Locale.US).replace(' ', '_');
+        return normalized.contains("invalid_refresh_token");
+    }
 }

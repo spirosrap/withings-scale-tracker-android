@@ -32,6 +32,16 @@ final class MacSleepBridgeClient {
         return summaries;
     }
 
+    List<ScaleReading> fetchScaleReadings(String host) throws Exception {
+        String response = get(host, "/withings/scale");
+        JSONArray json = new JSONArray(response);
+        ArrayList<ScaleReading> readings = new ArrayList<>();
+        for (int index = 0; index < json.length(); index++) {
+            readings.add(ScaleReading.fromBridgeJson(json.getJSONObject(index)));
+        }
+        return ScaleReading.mergeSameTimestamp(readings);
+    }
+
     private String get(String host, String path) throws Exception {
         String normalizedHost = host.trim()
             .replace("http://", "")

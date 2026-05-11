@@ -23,6 +23,7 @@ final class SecureStore {
     private static final String CREDENTIALS = "credentials";
     private static final String TOKEN = "token";
     private static final String OAUTH_STATE = "oauth_state";
+    private static final String SCALE_READINGS = "scale_readings";
     private static final String SLEEP_SUMMARIES = "sleep_summaries";
     private static final String HEALTH_SNAPSHOT = "health_snapshot";
     private static final String MAC_BRIDGE_HOST = "mac_bridge_host";
@@ -81,6 +82,26 @@ final class SecureStore {
 
     void clearToken() {
         prefs.edit().remove(TOKEN).apply();
+    }
+
+    void saveScaleReadings(Iterable<ScaleReading> readings) throws Exception {
+        JSONArray json = new JSONArray();
+        for (ScaleReading reading : readings) {
+            json.put(reading.toJson());
+        }
+        putEncrypted(SCALE_READINGS, json.toString());
+    }
+
+    java.util.ArrayList<ScaleReading> loadScaleReadings() throws Exception {
+        java.util.ArrayList<ScaleReading> readings = new java.util.ArrayList<>();
+        String raw = getEncrypted(SCALE_READINGS);
+        if (raw == null) return readings;
+
+        JSONArray json = new JSONArray(raw);
+        for (int index = 0; index < json.length(); index++) {
+            readings.add(ScaleReading.fromStoredJson(json.getJSONObject(index)));
+        }
+        return readings;
     }
 
     void saveSleepSummaries(Iterable<SleepSummary> summaries) throws Exception {
