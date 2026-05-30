@@ -26,6 +26,7 @@ final class SecureStore {
     private static final String SCALE_READINGS = "scale_readings";
     private static final String SLEEP_SUMMARIES = "sleep_summaries";
     private static final String HEALTH_SNAPSHOT = "health_snapshot";
+    private static final String HEALTH_SNAPSHOTS = "health_snapshots";
     private static final String RUNNING_WORKOUTS = "running_workouts";
     private static final String MAC_BRIDGE_HOST = "mac_bridge_host";
 
@@ -133,6 +134,26 @@ final class SecureStore {
         String raw = getEncrypted(HEALTH_SNAPSHOT);
         if (raw == null) return null;
         return HealthSnapshot.fromStoredJson(new JSONObject(raw));
+    }
+
+    void saveHealthSnapshots(Iterable<HealthSnapshot> snapshots) throws Exception {
+        JSONArray json = new JSONArray();
+        for (HealthSnapshot snapshot : snapshots) {
+            json.put(snapshot.toJson());
+        }
+        putEncrypted(HEALTH_SNAPSHOTS, json.toString());
+    }
+
+    java.util.ArrayList<HealthSnapshot> loadHealthSnapshots() throws Exception {
+        java.util.ArrayList<HealthSnapshot> snapshots = new java.util.ArrayList<>();
+        String raw = getEncrypted(HEALTH_SNAPSHOTS);
+        if (raw == null) return snapshots;
+
+        JSONArray json = new JSONArray(raw);
+        for (int index = 0; index < json.length(); index++) {
+            snapshots.add(HealthSnapshot.fromStoredJson(json.getJSONObject(index)));
+        }
+        return snapshots;
     }
 
     void saveRunningWorkouts(Iterable<RunningWorkout> workouts) throws Exception {

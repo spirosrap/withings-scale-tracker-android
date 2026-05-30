@@ -18,7 +18,7 @@ final class MacSleepBridgeClient {
             String response = get(host, "/apple-health/snapshot");
             return HealthBridgePayload.fromBridgeJson(new JSONObject(response));
         } catch (Exception exception) {
-            return new HealthBridgePayload(null, fetch(host), new ArrayList<>());
+            return new HealthBridgePayload(null, fetch(host), new ArrayList<>(), new ArrayList<>());
         }
     }
 

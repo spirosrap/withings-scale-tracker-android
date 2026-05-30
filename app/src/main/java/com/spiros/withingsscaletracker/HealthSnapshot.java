@@ -20,6 +20,7 @@ final class HealthSnapshot {
     final Double flightsClimbed;
     final Double latestHeartRate;
     final Double restingHeartRate;
+    final Double heartRateVariabilityMilliseconds;
     final Double latestRespiratoryRate;
     final Double oxygenSaturationPercent;
 
@@ -36,6 +37,7 @@ final class HealthSnapshot {
         Double flightsClimbed,
         Double latestHeartRate,
         Double restingHeartRate,
+        Double heartRateVariabilityMilliseconds,
         Double latestRespiratoryRate,
         Double oxygenSaturationPercent
     ) {
@@ -51,6 +53,7 @@ final class HealthSnapshot {
         this.flightsClimbed = flightsClimbed;
         this.latestHeartRate = latestHeartRate;
         this.restingHeartRate = restingHeartRate;
+        this.heartRateVariabilityMilliseconds = heartRateVariabilityMilliseconds;
         this.latestRespiratoryRate = latestRespiratoryRate;
         this.oxygenSaturationPercent = oxygenSaturationPercent;
     }
@@ -81,6 +84,7 @@ final class HealthSnapshot {
             flightsClimbed != null ||
             latestHeartRate != null ||
             restingHeartRate != null ||
+            heartRateVariabilityMilliseconds != null ||
             latestRespiratoryRate != null ||
             oxygenSaturationPercent != null;
     }
@@ -99,6 +103,7 @@ final class HealthSnapshot {
         putNullable(json, "flightsClimbed", flightsClimbed);
         putNullable(json, "latestHeartRate", latestHeartRate);
         putNullable(json, "restingHeartRate", restingHeartRate);
+        putNullable(json, "heartRateVariabilityMilliseconds", heartRateVariabilityMilliseconds);
         putNullable(json, "latestRespiratoryRate", latestRespiratoryRate);
         putNullable(json, "oxygenSaturationPercent", oxygenSaturationPercent);
         return json;
@@ -118,6 +123,7 @@ final class HealthSnapshot {
             optionalDouble(json, "flightsClimbed"),
             optionalDouble(json, "latestHeartRate"),
             optionalDouble(json, "restingHeartRate"),
+            optionalDouble(json, "heartRateVariabilityMilliseconds"),
             optionalDouble(json, "latestRespiratoryRate"),
             optionalDouble(json, "oxygenSaturationPercent")
         );
@@ -139,6 +145,7 @@ final class HealthSnapshot {
             optionalDouble(metrics, "flightsClimbed"),
             optionalDouble(metrics, "latestHeartRate"),
             optionalDouble(metrics, "restingHeartRate"),
+            optionalDouble(metrics, "heartRateVariabilityMilliseconds"),
             optionalDouble(metrics, "latestRespiratoryRate"),
             optionalDouble(metrics, "oxygenSaturationPercent")
         );
@@ -158,6 +165,7 @@ final class HealthSnapshot {
             flightsClimbed,
             latestHeartRate,
             restingHeartRate,
+            heartRateVariabilityMilliseconds,
             latestRespiratoryRate,
             oxygenSaturationPercent
         );
@@ -186,6 +194,10 @@ final class HealthSnapshot {
 
     static String formatBpm(Double value) {
         return value == null ? "--" : formatWhole(value) + " bpm";
+    }
+
+    static String formatMilliseconds(Double value) {
+        return value == null ? "--" : formatWhole(value) + " ms";
     }
 
     static String formatRespiratoryRate(Double value) {

@@ -45,6 +45,7 @@ public final class MainActivity extends Activity {
     private WithingsToken token;
     private final ArrayList<ScaleReading> readings = new ArrayList<>();
     private final ArrayList<SleepSummary> sleepSummaries = new ArrayList<>();
+    private final ArrayList<HealthSnapshot> dailyHealthSnapshots = new ArrayList<>();
     private final ArrayList<RunningWorkout> runningWorkouts = new ArrayList<>();
     private HealthSnapshot healthSnapshot;
     private String status = "Not configured";
@@ -98,6 +99,8 @@ public final class MainActivity extends Activity {
             readings.addAll(secureStore.loadScaleReadings());
             sleepSummaries.clear();
             sleepSummaries.addAll(secureStore.loadSleepSummaries());
+            dailyHealthSnapshots.clear();
+            dailyHealthSnapshots.addAll(secureStore.loadHealthSnapshots());
             runningWorkouts.clear();
             runningWorkouts.addAll(secureStore.loadRunningWorkouts());
             healthSnapshot = secureStore.loadHealthSnapshot();
@@ -359,10 +362,15 @@ public final class MainActivity extends Activity {
     private void importHealthPayload(HealthBridgePayload payload, String note, boolean importedScale) {
         boolean importedSnapshot = payload.snapshot != null;
         boolean importedSleep = !payload.sleepSummaries.isEmpty();
+        boolean importedDailySnapshots = !payload.dailySnapshots.isEmpty();
         boolean importedRuns = !payload.runningWorkouts.isEmpty();
         if (payload.snapshot != null) {
             healthSnapshot = payload.snapshot.importedNow();
             saveHealthSnapshot();
+        }
+        if (importedDailySnapshots) {
+            mergeHealthSnapshots(payload.dailySnapshots);
+            saveHealthSnapshots();
         }
         if (importedSleep) {
             mergeSleepSummaries(payload.sleepSummaries);
@@ -373,7 +381,7 @@ public final class MainActivity extends Activity {
             saveRunningWorkoutCache();
         }
 
-        if (!importedSnapshot && !importedSleep && !importedRuns && !importedScale) {
+        if (!importedSnapshot && !importedSleep && !importedDailySnapshots && !importedRuns && !importedScale) {
             sleepNote = "Bridge is reachable. No Apple Health data was returned.";
             healthNote = sleepNote;
             status = "Bridge checked " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
@@ -381,7 +389,7 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        if (importedSnapshot || importedRuns) {
+        if (importedSnapshot || importedDailySnapshots || importedRuns) {
             sleepNote = note;
             healthNote = importedScale ? "Imported scale and Apple Health data from Mac bridge." : note;
             status = importedScale ? "Mac import updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date()) : "Health updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
@@ -421,6 +429,19 @@ public final class MainActivity extends Activity {
         runningWorkouts.addAll(RunningWorkout.sortedNewestFirst(new ArrayList<>(merged.values())));
     }
 
+    private void mergeHealthSnapshots(List<HealthSnapshot> imported) {
+        LinkedHashMap<String, HealthSnapshot> merged = new LinkedHashMap<>();
+        for (HealthSnapshot snapshot : dailyHealthSnapshots) {
+            merged.put(snapshot.id, snapshot);
+        }
+        for (HealthSnapshot snapshot : imported) {
+            merged.put(snapshot.id, snapshot.importedNow());
+        }
+        dailyHealthSnapshots.clear();
+        dailyHealthSnapshots.addAll(merged.values());
+        dailyHealthSnapshots.sort((left, right) -> Long.compare(right.startEpochSeconds, left.startEpochSeconds));
+    }
+
     private void saveSleepCache() {
         try {
             secureStore.saveSleepSummaries(sleepSummaries);
@@ -440,6 +461,14 @@ public final class MainActivity extends Activity {
     private void saveHealthSnapshot() {
         try {
             secureStore.saveHealthSnapshot(healthSnapshot);
+        } catch (Exception exception) {
+            error = exception.getMessage();
+        }
+    }
+
+    private void saveHealthSnapshots() {
+        try {
+            secureStore.saveHealthSnapshots(dailyHealthSnapshots);
         } catch (Exception exception) {
             error = exception.getMessage();
         }
@@ -679,6 +708,7 @@ public final class MainActivity extends Activity {
 
         if (healthSnapshot == null) {
             content.addView(statusPanel("No Health Snapshot", "Open the iPhone app, allow the new Health categories, then send to the Mac bridge."));
+            renderRecentVitals(content);
             return;
         }
 
@@ -688,6 +718,7 @@ public final class MainActivity extends Activity {
 
         if (!healthSnapshot.hasValues()) {
             content.addView(statusPanel("No Values", "The snapshot was imported, but Apple Health did not return values for the requested categories yet."));
+            renderRecentVitals(content);
             return;
         }
 
@@ -713,6 +744,9 @@ public final class MainActivity extends Activity {
         if (healthSnapshot.restingHeartRate != null) {
             grid.addView(valueCard("Resting HR", HealthSnapshot.formatBpm(healthSnapshot.restingHeartRate)), gridCellParams());
         }
+        if (healthSnapshot.heartRateVariabilityMilliseconds != null) {
+            grid.addView(valueCard("HRV", HealthSnapshot.formatMilliseconds(healthSnapshot.heartRateVariabilityMilliseconds)), gridCellParams());
+        }
         if (healthSnapshot.latestRespiratoryRate != null) {
             grid.addView(valueCard("Resp.", HealthSnapshot.formatRespiratoryRate(healthSnapshot.latestRespiratoryRate)), gridCellParams());
         }
@@ -720,6 +754,22 @@ public final class MainActivity extends Activity {
             grid.addView(valueCard("Blood Oxygen", HealthSnapshot.formatPercent(healthSnapshot.oxygenSaturationPercent)), gridCellParams());
         }
         content.addView(grid);
+
+        renderRecentVitals(content);
+    }
+
+    private void renderRecentVitals(LinearLayout content) {
+        content.addView(sectionTitle("Recent Vitals"));
+        if (dailyHealthSnapshots.isEmpty()) {
+            content.addView(statusPanel("No Recent Vitals", "Daily HRV and resting heart-rate snapshots have not been imported yet."));
+        }
+        for (int i = 0; i < Math.min(dailyHealthSnapshots.size(), 7); i++) {
+            HealthSnapshot snapshot = dailyHealthSnapshots.get(i);
+            content.addView(simpleRow(
+                snapshot.formattedDate(),
+                "RHR " + HealthSnapshot.formatBpm(snapshot.restingHeartRate) + "  HRV " + HealthSnapshot.formatMilliseconds(snapshot.heartRateVariabilityMilliseconds)
+            ));
+        }
     }
 
     private void renderRuns(LinearLayout content) {
