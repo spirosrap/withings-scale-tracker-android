@@ -45,6 +45,7 @@ public final class MainActivity extends Activity {
     private WithingsToken token;
     private final ArrayList<ScaleReading> readings = new ArrayList<>();
     private final ArrayList<SleepSummary> sleepSummaries = new ArrayList<>();
+    private final ArrayList<RunningWorkout> runningWorkouts = new ArrayList<>();
     private HealthSnapshot healthSnapshot;
     private String status = "Not configured";
     private String error;
@@ -97,6 +98,8 @@ public final class MainActivity extends Activity {
             readings.addAll(secureStore.loadScaleReadings());
             sleepSummaries.clear();
             sleepSummaries.addAll(secureStore.loadSleepSummaries());
+            runningWorkouts.clear();
+            runningWorkouts.addAll(secureStore.loadRunningWorkouts());
             healthSnapshot = secureStore.loadHealthSnapshot();
             macBridgeHost = secureStore.loadMacBridgeHost();
             status = token != null ? "Connected" : (credentials.isComplete() ? "Needs authorization" : "Not configured");
@@ -356,6 +359,7 @@ public final class MainActivity extends Activity {
     private void importHealthPayload(HealthBridgePayload payload, String note, boolean importedScale) {
         boolean importedSnapshot = payload.snapshot != null;
         boolean importedSleep = !payload.sleepSummaries.isEmpty();
+        boolean importedRuns = !payload.runningWorkouts.isEmpty();
         if (payload.snapshot != null) {
             healthSnapshot = payload.snapshot.importedNow();
             saveHealthSnapshot();
@@ -364,8 +368,12 @@ public final class MainActivity extends Activity {
             mergeSleepSummaries(payload.sleepSummaries);
             saveSleepCache();
         }
+        if (importedRuns) {
+            mergeRunningWorkouts(payload.runningWorkouts);
+            saveRunningWorkoutCache();
+        }
 
-        if (!importedSnapshot && !importedSleep && !importedScale) {
+        if (!importedSnapshot && !importedSleep && !importedRuns && !importedScale) {
             sleepNote = "Bridge is reachable. No Apple Health data was returned.";
             healthNote = sleepNote;
             status = "Bridge checked " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
@@ -373,7 +381,7 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        if (importedSnapshot) {
+        if (importedSnapshot || importedRuns) {
             sleepNote = note;
             healthNote = importedScale ? "Imported scale and Apple Health data from Mac bridge." : note;
             status = importedScale ? "Mac import updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date()) : "Health updated " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
@@ -401,6 +409,18 @@ public final class MainActivity extends Activity {
         sleepSummaries.sort((left, right) -> Long.compare(right.startEpochSeconds, left.startEpochSeconds));
     }
 
+    private void mergeRunningWorkouts(List<RunningWorkout> imported) {
+        LinkedHashMap<String, RunningWorkout> merged = new LinkedHashMap<>();
+        for (RunningWorkout workout : runningWorkouts) {
+            merged.put(workout.id, workout);
+        }
+        for (RunningWorkout workout : imported) {
+            merged.put(workout.id, workout);
+        }
+        runningWorkouts.clear();
+        runningWorkouts.addAll(RunningWorkout.sortedNewestFirst(new ArrayList<>(merged.values())));
+    }
+
     private void saveSleepCache() {
         try {
             secureStore.saveSleepSummaries(sleepSummaries);
@@ -420,6 +440,14 @@ public final class MainActivity extends Activity {
     private void saveHealthSnapshot() {
         try {
             secureStore.saveHealthSnapshot(healthSnapshot);
+        } catch (Exception exception) {
+            error = exception.getMessage();
+        }
+    }
+
+    private void saveRunningWorkoutCache() {
+        try {
+            secureStore.saveRunningWorkouts(runningWorkouts);
         } catch (Exception exception) {
             error = exception.getMessage();
         }
@@ -457,6 +485,9 @@ public final class MainActivity extends Activity {
                 break;
             case HEALTH:
                 renderHealth(content);
+                break;
+            case RUNS:
+                renderRuns(content);
                 break;
             case SETTINGS:
                 renderSettings(content);
@@ -577,7 +608,7 @@ public final class MainActivity extends Activity {
     private void renderSleep(LinearLayout content) {
         content.addView(statusPanel(
             "Mac Bridge",
-            "Send sleep and today's Apple Health snapshot from the iPhone to the Mac app first, then import it here."
+            "Send sleep, workouts, and today's Apple Health snapshot from the iPhone to the Mac app first, then import it here."
         ));
 
         EditText macHost = editText("Mac bridge host", macBridgeHost, false);
@@ -689,6 +720,63 @@ public final class MainActivity extends Activity {
             grid.addView(valueCard("Blood Oxygen", HealthSnapshot.formatPercent(healthSnapshot.oxygenSaturationPercent)), gridCellParams());
         }
         content.addView(grid);
+    }
+
+    private void renderRuns(LinearLayout content) {
+        content.addView(statusPanel(
+            "Apple Health Runs",
+            "These are the latest iPhone running workouts imported through the Mac bridge."
+        ));
+
+        EditText macHost = editText("Mac bridge host", macBridgeHost, false);
+        content.addView(macHost);
+
+        Button importFromMac = new Button(this);
+        importFromMac.setText("Import from Mac");
+        importFromMac.setAllCaps(false);
+        importFromMac.setEnabled(!loading);
+        importFromMac.setOnClickListener(view -> importSleepFromMac(macHost.getText().toString()));
+        content.addView(importFromMac);
+
+        if (healthNote != null && !healthNote.isEmpty()) {
+            content.addView(statusPanel("Import", healthNote));
+        }
+
+        if (runningWorkouts.isEmpty()) {
+            content.addView(statusPanel("No Runs", "Open the iPhone app, allow workout access, then send Apple Health data to the Mac bridge."));
+            return;
+        }
+
+        RunningWorkout latest = runningWorkouts.get(0);
+        content.addView(sectionTitle("Latest Run  " + latest.formattedDate()));
+
+        LinearLayout grid = grid();
+        grid.addView(valueCard("Distance", latest.formattedDistance()), gridCellParams());
+        grid.addView(valueCard("Duration", latest.formattedDuration()), gridCellParams());
+        grid.addView(valueCard("Pace", latest.formattedPace()), gridCellParams());
+        grid.addView(valueCard("Main Pace", latest.formattedMainPace()), gridCellParams());
+        grid.addView(valueCard("Avg HR", latest.formattedAverageHeartRate()), gridCellParams());
+        grid.addView(valueCard("Route", latest.formattedRoute()), gridCellParams());
+        content.addView(grid);
+
+        renderProjection(content, latest);
+
+        content.addView(sectionTitle("Recent Runs"));
+        for (int i = 0; i < Math.min(runningWorkouts.size(), 8); i++) {
+            RunningWorkout workout = runningWorkouts.get(i);
+            content.addView(simpleRow(workout.formattedDate() + " " + workout.formattedStartTime(), workout.formattedDistance() + "  " + workout.formattedPace()));
+        }
+    }
+
+    private void renderProjection(LinearLayout content, RunningWorkout workout) {
+        Double pace = workout.projectionPaceSecondsPerKilometer();
+        if (pace == null) return;
+
+        content.addView(sectionTitle("Projected"));
+        content.addView(simpleRow("5K", RunningWorkout.formatDuration(pace * 5.0)));
+        content.addView(simpleRow("10K", RunningWorkout.formatDuration(pace * 10.0)));
+        content.addView(simpleRow("Half", RunningWorkout.formatDuration(pace * 21.0975)));
+        content.addView(simpleRow("Marathon", RunningWorkout.formatDuration(pace * 42.195)));
     }
 
     private void renderSettings(LinearLayout content) {
@@ -864,6 +952,7 @@ public final class MainActivity extends Activity {
         HISTORY("History"),
         SLEEP("Sleep"),
         HEALTH("Health"),
+        RUNS("Runs"),
         SETTINGS("Settings");
 
         final String title;

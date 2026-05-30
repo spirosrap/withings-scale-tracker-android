@@ -9,10 +9,16 @@ import java.util.List;
 final class HealthBridgePayload {
     final HealthSnapshot snapshot;
     final List<SleepSummary> sleepSummaries;
+    final List<RunningWorkout> runningWorkouts;
 
-    HealthBridgePayload(HealthSnapshot snapshot, List<SleepSummary> sleepSummaries) {
+    HealthBridgePayload(
+        HealthSnapshot snapshot,
+        List<SleepSummary> sleepSummaries,
+        List<RunningWorkout> runningWorkouts
+    ) {
         this.snapshot = snapshot;
         this.sleepSummaries = sleepSummaries;
+        this.runningWorkouts = runningWorkouts;
     }
 
     static HealthBridgePayload fromBridgeJson(JSONObject json) throws Exception {
@@ -29,6 +35,14 @@ final class HealthBridgePayload {
             }
         }
 
-        return new HealthBridgePayload(snapshot, summaries);
+        ArrayList<RunningWorkout> workouts = new ArrayList<>();
+        JSONArray workoutJson = json.optJSONArray("runningWorkouts");
+        if (workoutJson != null) {
+            for (int index = 0; index < workoutJson.length(); index++) {
+                workouts.add(RunningWorkout.fromBridgeJson(workoutJson.getJSONObject(index)));
+            }
+        }
+
+        return new HealthBridgePayload(snapshot, summaries, workouts);
     }
 }

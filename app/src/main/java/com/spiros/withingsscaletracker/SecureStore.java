@@ -26,6 +26,7 @@ final class SecureStore {
     private static final String SCALE_READINGS = "scale_readings";
     private static final String SLEEP_SUMMARIES = "sleep_summaries";
     private static final String HEALTH_SNAPSHOT = "health_snapshot";
+    private static final String RUNNING_WORKOUTS = "running_workouts";
     private static final String MAC_BRIDGE_HOST = "mac_bridge_host";
 
     private final SharedPreferences prefs;
@@ -132,6 +133,26 @@ final class SecureStore {
         String raw = getEncrypted(HEALTH_SNAPSHOT);
         if (raw == null) return null;
         return HealthSnapshot.fromStoredJson(new JSONObject(raw));
+    }
+
+    void saveRunningWorkouts(Iterable<RunningWorkout> workouts) throws Exception {
+        JSONArray json = new JSONArray();
+        for (RunningWorkout workout : workouts) {
+            json.put(workout.toJson());
+        }
+        putEncrypted(RUNNING_WORKOUTS, json.toString());
+    }
+
+    java.util.ArrayList<RunningWorkout> loadRunningWorkouts() throws Exception {
+        java.util.ArrayList<RunningWorkout> workouts = new java.util.ArrayList<>();
+        String raw = getEncrypted(RUNNING_WORKOUTS);
+        if (raw == null) return workouts;
+
+        JSONArray json = new JSONArray(raw);
+        for (int index = 0; index < json.length(); index++) {
+            workouts.add(RunningWorkout.fromStoredJson(json.getJSONObject(index)));
+        }
+        return workouts;
     }
 
     void saveOAuthState(String state) {
