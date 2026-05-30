@@ -482,7 +482,6 @@ public final class MainActivity extends Activity {
         }
     }
 
-
     private void render() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -723,6 +722,8 @@ public final class MainActivity extends Activity {
         }
 
         LinearLayout grid = grid();
+        grid.addView(valueCard("Resting HR", HealthSnapshot.formatBpm(latestRestingHeartRate())), gridCellParams());
+        grid.addView(valueCard("HRV", HealthSnapshot.formatMilliseconds(latestHeartRateVariability())), gridCellParams());
         if (healthSnapshot.steps != null) {
             grid.addView(valueCard("Steps", HealthSnapshot.formatWhole(healthSnapshot.steps)), gridCellParams());
         }
@@ -740,12 +741,6 @@ public final class MainActivity extends Activity {
         }
         if (healthSnapshot.latestHeartRate != null) {
             grid.addView(valueCard("Heart Rate", HealthSnapshot.formatBpm(healthSnapshot.latestHeartRate)), gridCellParams());
-        }
-        if (healthSnapshot.restingHeartRate != null) {
-            grid.addView(valueCard("Resting HR", HealthSnapshot.formatBpm(healthSnapshot.restingHeartRate)), gridCellParams());
-        }
-        if (healthSnapshot.heartRateVariabilityMilliseconds != null) {
-            grid.addView(valueCard("HRV", HealthSnapshot.formatMilliseconds(healthSnapshot.heartRateVariabilityMilliseconds)), gridCellParams());
         }
         if (healthSnapshot.latestRespiratoryRate != null) {
             grid.addView(valueCard("Resp.", HealthSnapshot.formatRespiratoryRate(healthSnapshot.latestRespiratoryRate)), gridCellParams());
@@ -770,6 +765,26 @@ public final class MainActivity extends Activity {
                 "RHR " + HealthSnapshot.formatBpm(snapshot.restingHeartRate) + "  HRV " + HealthSnapshot.formatMilliseconds(snapshot.heartRateVariabilityMilliseconds)
             ));
         }
+    }
+
+    private Double latestRestingHeartRate() {
+        if (healthSnapshot != null && healthSnapshot.restingHeartRate != null) {
+            return healthSnapshot.restingHeartRate;
+        }
+        for (HealthSnapshot snapshot : dailyHealthSnapshots) {
+            if (snapshot.restingHeartRate != null) return snapshot.restingHeartRate;
+        }
+        return null;
+    }
+
+    private Double latestHeartRateVariability() {
+        if (healthSnapshot != null && healthSnapshot.heartRateVariabilityMilliseconds != null) {
+            return healthSnapshot.heartRateVariabilityMilliseconds;
+        }
+        for (HealthSnapshot snapshot : dailyHealthSnapshots) {
+            if (snapshot.heartRateVariabilityMilliseconds != null) return snapshot.heartRateVariabilityMilliseconds;
+        }
+        return null;
     }
 
     private void renderRuns(LinearLayout content) {
