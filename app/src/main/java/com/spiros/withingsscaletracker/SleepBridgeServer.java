@@ -3,10 +3,8 @@ package com.spiros.withingsscaletracker;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -64,8 +62,7 @@ final class SleepBridgeServer {
     private void handle(Socket socket) {
         try (Socket closeableSocket = socket) {
             InputStream input = closeableSocket.getInputStream();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
-            String requestLine = reader.readLine();
+            String requestLine = readLine(input);
             if (requestLine == null) {
                 send(closeableSocket, "400 Bad Request", "Missing request line.");
                 return;
@@ -73,7 +70,7 @@ final class SleepBridgeServer {
 
             int contentLength = 0;
             String line;
-            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            while ((line = readLine(input)) != null && !line.isEmpty()) {
                 int separator = line.indexOf(':');
                 if (separator < 0) continue;
                 String name = line.substring(0, separator).trim().toLowerCase(Locale.US);
@@ -90,15 +87,7 @@ final class SleepBridgeServer {
                 return;
             }
 
-            char[] chars = new char[Math.max(contentLength, 0)];
-            int offset = 0;
-            while (offset < chars.length) {
-                int read = reader.read(chars, offset, chars.length - offset);
-                if (read < 0) break;
-                offset += read;
-            }
-
-            String body = new String(chars, 0, offset);
+            String body = new String(readBody(input, Math.max(contentLength, 0)), StandardCharsets.UTF_8);
             if (isSnapshotRoute) {
                 HealthBridgePayload payload = HealthBridgePayload.fromBridgeJson(new JSONObject(body));
                 listener.onHealthPayload(payload);
@@ -119,6 +108,34 @@ final class SleepBridgeServer {
             } catch (Exception ignored) {
             }
         }
+    }
+
+    private String readLine(InputStream input) throws Exception {
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        boolean didRead = false;
+        int value;
+        while ((value = input.read()) != -1) {
+            didRead = true;
+            if (value == '\n') break;
+            if (value != '\r') line.write(value);
+        }
+        if (!didRead && line.size() == 0) return null;
+        return line.toString(StandardCharsets.UTF_8.name());
+    }
+
+    private byte[] readBody(InputStream input, int contentLength) throws Exception {
+        byte[] body = new byte[contentLength];
+        int offset = 0;
+        while (offset < body.length) {
+            int read = input.read(body, offset, body.length - offset);
+            if (read < 0) break;
+            offset += read;
+        }
+        if (offset == body.length) return body;
+
+        byte[] partial = new byte[offset];
+        System.arraycopy(body, 0, partial, 0, offset);
+        return partial;
     }
 
     private void send(Socket socket, String status, String body) throws Exception {
