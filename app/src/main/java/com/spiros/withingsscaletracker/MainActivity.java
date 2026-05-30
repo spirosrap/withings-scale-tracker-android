@@ -754,7 +754,8 @@ public final class MainActivity extends Activity {
         grid.addView(valueCard("Distance", latest.formattedDistance()), gridCellParams());
         grid.addView(valueCard("Duration", latest.formattedDuration()), gridCellParams());
         grid.addView(valueCard("Pace", latest.formattedPace()), gridCellParams());
-        grid.addView(valueCard("Main Pace", latest.formattedMainPace()), gridCellParams());
+        grid.addView(valueCard("45m Pace", latest.formattedRunPace()), gridCellParams());
+        grid.addView(valueCard("Run Window", latest.formattedRunWindow()), gridCellParams());
         grid.addView(valueCard("Avg HR", latest.formattedAverageHeartRate()), gridCellParams());
         grid.addView(valueCard("Route", latest.formattedRoute()), gridCellParams());
         content.addView(grid);

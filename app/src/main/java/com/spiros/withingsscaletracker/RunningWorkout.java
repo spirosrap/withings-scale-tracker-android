@@ -21,7 +21,9 @@ final class RunningWorkout {
     final String source;
     final int routePointCount;
     final Double routeDistanceMeters;
-    final Double mainPaceSecondsPerKilometer;
+    final Double runPaceSecondsPerKilometer;
+    final Double runStartOffsetSeconds;
+    final Double runEndOffsetSeconds;
 
     RunningWorkout(
         String id,
@@ -34,7 +36,9 @@ final class RunningWorkout {
         String source,
         int routePointCount,
         Double routeDistanceMeters,
-        Double mainPaceSecondsPerKilometer
+        Double runPaceSecondsPerKilometer,
+        Double runStartOffsetSeconds,
+        Double runEndOffsetSeconds
     ) {
         this.id = id;
         this.startEpochSeconds = startEpochSeconds;
@@ -46,7 +50,9 @@ final class RunningWorkout {
         this.source = source == null ? "" : source;
         this.routePointCount = routePointCount;
         this.routeDistanceMeters = routeDistanceMeters;
-        this.mainPaceSecondsPerKilometer = mainPaceSecondsPerKilometer;
+        this.runPaceSecondsPerKilometer = runPaceSecondsPerKilometer;
+        this.runStartOffsetSeconds = runStartOffsetSeconds;
+        this.runEndOffsetSeconds = runEndOffsetSeconds;
     }
 
     JSONObject toJson() throws Exception {
@@ -61,7 +67,9 @@ final class RunningWorkout {
         json.put("source", source);
         json.put("routePointCount", routePointCount);
         putNullable(json, "routeDistanceMeters", routeDistanceMeters);
-        putNullable(json, "mainPaceSecondsPerKilometer", mainPaceSecondsPerKilometer);
+        putNullable(json, "runPaceSecondsPerKilometer", runPaceSecondsPerKilometer);
+        putNullable(json, "runStartOffsetSeconds", runStartOffsetSeconds);
+        putNullable(json, "runEndOffsetSeconds", runEndOffsetSeconds);
         return json;
     }
 
@@ -77,16 +85,21 @@ final class RunningWorkout {
             json.optString("source", ""),
             json.optInt("routePointCount", 0),
             optionalDouble(json, "routeDistanceMeters"),
-            optionalDouble(json, "mainPaceSecondsPerKilometer")
+            optionalDouble(json, "runPaceSecondsPerKilometer"),
+            optionalDouble(json, "runStartOffsetSeconds"),
+            optionalDouble(json, "runEndOffsetSeconds")
         );
     }
 
     static RunningWorkout fromBridgeJson(JSONObject json) {
         ArrayList<RouteSample> routeSamples = routeSamples(json.optJSONArray("routePoints"));
+        long startEpochSeconds = bridgeDateSeconds(json, "startDate");
+        long endEpochSeconds = bridgeDateSeconds(json, "endDate");
+        RunSegment segment = bestRunSegment(routeSamples, startEpochSeconds, endEpochSeconds, 45 * 60.0);
         return new RunningWorkout(
             json.optString("id", ""),
-            bridgeDateSeconds(json, "startDate"),
-            bridgeDateSeconds(json, "endDate"),
+            startEpochSeconds,
+            endEpochSeconds,
             json.optDouble("durationSeconds", 0),
             optionalDouble(json, "totalDistanceMeters"),
             optionalDouble(json, "activeEnergyKilocalories"),
@@ -94,7 +107,9 @@ final class RunningWorkout {
             json.optString("source", ""),
             routeSamples.size(),
             routeDistanceMeters(routeSamples),
-            mainPaceSecondsPerKilometer(routeSamples)
+            segment == null ? null : segment.secondsPerKilometer,
+            segment == null ? null : segment.startOffsetSeconds,
+            segment == null ? null : segment.endOffsetSeconds
         );
     }
 
@@ -126,9 +141,19 @@ final class RunningWorkout {
         return formatPace(durationSeconds / (distance / 1000.0));
     }
 
-    String formattedMainPace() {
-        if (mainPaceSecondsPerKilometer == null) return "--";
-        return formatPace(mainPaceSecondsPerKilometer);
+    String formattedRunPace() {
+        if (runPaceSecondsPerKilometer == null) return "--";
+        return formatPace(runPaceSecondsPerKilometer);
+    }
+
+    String formattedRunWindow() {
+        if (runStartOffsetSeconds == null || runEndOffsetSeconds == null) return "--";
+        return String.format(
+            Locale.US,
+            "%.0f-%.0fm",
+            runStartOffsetSeconds / 60.0,
+            runEndOffsetSeconds / 60.0
+        );
     }
 
     String formattedAverageHeartRate() {
@@ -141,7 +166,7 @@ final class RunningWorkout {
     }
 
     Double projectionPaceSecondsPerKilometer() {
-        if (mainPaceSecondsPerKilometer != null) return mainPaceSecondsPerKilometer;
+        if (runPaceSecondsPerKilometer != null) return runPaceSecondsPerKilometer;
         Double distance = distanceMeters();
         if (distance == null || distance <= 0) return null;
         return durationSeconds / (distance / 1000.0);
@@ -195,30 +220,51 @@ final class RunningWorkout {
         return distance > 0 ? distance : null;
     }
 
-    private static Double mainPaceSecondsPerKilometer(List<RouteSample> samples) {
-        Double routeDistance = routeDistanceMeters(samples);
-        if (routeDistance == null || routeDistance <= 3000) return null;
+    private static RunSegment bestRunSegment(
+        List<RouteSample> samples,
+        long workoutStartSeconds,
+        long workoutEndSeconds,
+        double targetDurationSeconds
+    ) {
+        if (samples.size() < 2 || targetDurationSeconds <= 0) return null;
+        if (workoutEndSeconds - workoutStartSeconds < targetDurationSeconds) return null;
 
-        double firstDistance = samples.get(0).distanceMeters;
-        double lastDistance = samples.get(samples.size() - 1).distanceMeters;
-        double startDistance = firstDistance + 1000;
-        double endDistance = lastDistance - 1000;
-        Double startTime = interpolatedTimeSeconds(startDistance, samples);
-        Double endTime = interpolatedTimeSeconds(endDistance, samples);
-        if (startTime == null || endTime == null || endTime <= startTime) return null;
-        return (endTime - startTime) / ((endDistance - startDistance) / 1000.0);
+        double firstCandidate = Math.max(workoutStartSeconds, samples.get(0).timestampSeconds);
+        double lastCandidate = Math.min(workoutEndSeconds, samples.get(samples.size() - 1).timestampSeconds) - targetDurationSeconds;
+        if (lastCandidate < firstCandidate) return null;
+
+        RunSegment best = null;
+        for (double candidateStart = firstCandidate; candidateStart <= lastCandidate; candidateStart += 5.0) {
+            double candidateEnd = candidateStart + targetDurationSeconds;
+            Double startDistance = interpolatedDistanceMeters(candidateStart, samples);
+            Double endDistance = interpolatedDistanceMeters(candidateEnd, samples);
+            if (startDistance == null || endDistance == null) continue;
+
+            double distanceMeters = endDistance - startDistance;
+            if (distanceMeters <= 0) continue;
+            if (best == null || distanceMeters > best.distanceMeters) {
+                best = new RunSegment(
+                    candidateStart - workoutStartSeconds,
+                    candidateEnd - workoutStartSeconds,
+                    distanceMeters,
+                    targetDurationSeconds / (distanceMeters / 1000.0)
+                );
+            }
+        }
+
+        return best;
     }
 
-    private static Double interpolatedTimeSeconds(double distance, List<RouteSample> samples) {
+    private static Double interpolatedDistanceMeters(double timestampSeconds, List<RouteSample> samples) {
         RouteSample previous = samples.get(0);
         for (int index = 1; index < samples.size(); index++) {
             RouteSample current = samples.get(index);
-            if (current.distanceMeters >= distance) {
-                if (current.distanceMeters == previous.distanceMeters) {
-                    return (double) current.timestampSeconds;
+            if (current.timestampSeconds >= timestampSeconds) {
+                if (current.timestampSeconds == previous.timestampSeconds) {
+                    return current.distanceMeters;
                 }
-                double fraction = (distance - previous.distanceMeters) / (current.distanceMeters - previous.distanceMeters);
-                return previous.timestampSeconds + ((current.timestampSeconds - previous.timestampSeconds) * fraction);
+                double fraction = (timestampSeconds - previous.timestampSeconds) / (current.timestampSeconds - previous.timestampSeconds);
+                return previous.distanceMeters + ((current.distanceMeters - previous.distanceMeters) * fraction);
             }
             previous = current;
         }
@@ -258,6 +304,25 @@ final class RunningWorkout {
         RouteSample(long timestampSeconds, double distanceMeters) {
             this.timestampSeconds = timestampSeconds;
             this.distanceMeters = distanceMeters;
+        }
+    }
+
+    private static final class RunSegment {
+        final double startOffsetSeconds;
+        final double endOffsetSeconds;
+        final double distanceMeters;
+        final double secondsPerKilometer;
+
+        RunSegment(
+            double startOffsetSeconds,
+            double endOffsetSeconds,
+            double distanceMeters,
+            double secondsPerKilometer
+        ) {
+            this.startOffsetSeconds = startOffsetSeconds;
+            this.endOffsetSeconds = endOffsetSeconds;
+            this.distanceMeters = distanceMeters;
+            this.secondsPerKilometer = secondsPerKilometer;
         }
     }
 }
